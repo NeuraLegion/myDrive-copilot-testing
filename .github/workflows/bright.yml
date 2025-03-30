@@ -1,0 +1,66 @@
+name: Security Tests
+
+on:
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  security-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install SecTester dependencies
+        run: npm i --save-dev @sectester/core @sectester/repeater @sectester/scan @sectester/runner
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Start application
+        run: docker compose up -d --wait
+        env:
+          DB_TYPE: fs
+          KEY: encryptionkey
+          MONGODB_URL: mongodb://127.0.0.1:27017/mydrive
+          PASSWORD_ACCESS: secretaccesspassword
+          PASSWORD_COOKIE: secretcookiepassword
+          PASSWORD_REFRESH: secretrefreshpassword
+          TEMP_VIDEO_THUMBNAIL_LIMIT: 5000000000
+          VIDEO_THUMBNAILS_ENABLED: 'true'
+
+      - name: Wait for application to be ready
+        run: |
+          until nc -zv 127.0.0.1 3000; do
+            echo "Waiting for application to be ready..."
+            sleep 5
+          done
+
+      - name: Run security tests
+        run: |
+          node --experimental-transform-types --experimental-strip-types --experimental-detect-module \
+          --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning \
+          --test-force-exit --test .brightsec/tests/*.test.ts --test-concurrency=4
+        env:
+          BRIGHT_HOSTNAME: ${{ vars.BRIGHT_HOSTNAME }}
+          BRIGHT_PROJECT_ID: ${{ vars.BRIGHT_PROJECT_ID }}
+          BRIGHT_TOKEN: ${{ secrets.BRIGHT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRIGHT_TARGET_URL: http://127.0.0.1:3000
+
+      - name: Shutdown application
+        if: always()
+        run: docker compose down
